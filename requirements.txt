@@ -1,0 +1,17 @@
+langchain
+langchain-community
+langchain-openai
+PyPDF2
+python-dotenv
+streamlit
+openai
+faiss-cpu
+altair
+tiktoken
+matplotlib
+pycryptodome==3.15.0
+# HuggingFace packages for free models
+sentence-transformers
+InstructorEmbedding
+huggingface-hub
+transformers
