@@ -10,23 +10,48 @@ from langchain_community.chat_models import ChatOpenAI
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationalRetrievalChain
 from htmlTemplates import css, bot_template, user_template, hide_st_style, footer
-from langchain_community.llms import HuggingFaceHub
+from langchain_huggingface import HuggingFaceEndpoint
 from matplotlib import style
 
 # Load environment variables
 load_dotenv()
 
-# Check API keys - OpenAI is optional, HuggingFace is recommended
+# Disable HuggingFace symlinks warning on Windows
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+# Suppress additional warnings
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
+
+# Check API keys availability (for informational purposes only)
 openai_key = os.getenv("OPENAI_API_KEY")
 hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 
-if not openai_key or openai_key == "your_openai_api_key_here":
-    st.info("💡 No OpenAI API key found. The app will use free HuggingFace models instead!")
-    if not hf_token:
-        st.warning("⚠️ Consider adding a HuggingFace API token to .env for better performance.")
-        st.info("Get one free at: https://huggingface.co/settings/tokens")
-else:
-    st.success("✅ OpenAI API key found - will try OpenAI first, with HuggingFace fallback.")
+# Note: No more automatic warnings - users will choose their processing mode explicitly
+
+
+@st.cache_resource
+def get_embeddings_model():
+    """Cache the embeddings model to avoid repeated downloads"""
+    return HuggingFaceInstructEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+
+
+@st.cache_resource
+def get_llm_model(processing_mode="hf_no_token"):
+    """Cache the LLM model to avoid repeated downloads"""
+    if processing_mode == "hf_with_token":
+        hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+    else:
+        hf_token = None
+    
+    return HuggingFaceEndpoint(
+        repo_id="google/flan-t5-small",  # Smaller, more reliable for public inference
+        temperature=0.1,
+        max_new_tokens=100,  # Conservative for reliability
+        timeout=30,  # Reasonable timeout
+        huggingfacehub_api_token=hf_token
+    )
 
 
 def get_pdf_text(pdf_docs):
@@ -75,82 +100,87 @@ def get_text_chunks(text):
     return chunks
 
 
-def get_vectorstore(text_chunks):
+def get_vectorstore(text_chunks, processing_mode="hf_no_token"):
     if not text_chunks:
         st.error("No text chunks available to create vector store.")
         return None
     
     try:
-        # Try OpenAI embeddings first
-        if os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_API_KEY") != "your_openai_api_key_here":
-            try:
-                embeddings = OpenAIEmbeddings()
-                st.info(f"Using OpenAI embeddings to create vector store from {len(text_chunks)} text chunks...")
-                vectorstore = FAISS.from_texts(texts=text_chunks, embedding=embeddings)
-                st.success("Vector store created successfully with OpenAI embeddings!")
-                return vectorstore
-            except Exception as openai_error:
-                if "quota" in str(openai_error).lower() or "429" in str(openai_error):
-                    st.warning("OpenAI quota exceeded. Switching to free HuggingFace embeddings...")
-                else:
-                    st.warning(f"OpenAI error: {str(openai_error)}. Switching to free HuggingFace embeddings...")
+        # Determine which embeddings to use based on user choice
+        if processing_mode == "openai":
+            # Try OpenAI embeddings first
+            if os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_API_KEY") != "your_openai_api_key_here":
+                try:
+                    embeddings = OpenAIEmbeddings()
+                    st.info(f"🚀 Using OpenAI embeddings (user selected) - creating vector store from {len(text_chunks)} text chunks...")
+                    vectorstore = FAISS.from_texts(texts=text_chunks, embedding=embeddings)
+                    st.success("✅ Vector store created successfully with OpenAI embeddings!")
+                    return vectorstore
+                except Exception as openai_error:
+                    if "quota" in str(openai_error).lower() or "429" in str(openai_error):
+                        st.error("❌ OpenAI quota exceeded! Falling back to HuggingFace embeddings...")
+                    else:
+                        st.error(f"❌ OpenAI error: {str(openai_error)}. Falling back to HuggingFace embeddings...")
+            else:
+                st.error("❌ No valid OpenAI API key found! Please add it to your .env file or choose a different processing mode.")
+                st.info("💡 Switching to HuggingFace embeddings...")
         
-        # Fallback to HuggingFace embeddings (free)
-        st.info("Using free HuggingFace embeddings (this may take a moment to download the model first time)...")
-        embeddings = HuggingFaceInstructEmbeddings(model_name="hkunlp/instructor-xl")
+        # Use HuggingFace embeddings (free) - works with or without token
+        st.info("🤗 Using free HuggingFace embeddings (cached - faster after first run)...")
+        embeddings = get_embeddings_model()  # Use cached model
         
-        st.info(f"Creating vector store from {len(text_chunks)} text chunks...")
+        st.info(f"🔄 Creating vector store from {len(text_chunks)} text chunks...")
         vectorstore = FAISS.from_texts(texts=text_chunks, embedding=embeddings)
-        st.success("Vector store created successfully with HuggingFace embeddings!")
+        st.success("✅ Vector store created successfully with HuggingFace embeddings!")
         return vectorstore
         
     except Exception as e:
-        st.error(f"Error creating vector store: {str(e)}")
+        st.error(f"❌ Error creating vector store: {str(e)}")
         return None
 
 
-def get_conversation_chain(vectorstore):
+def get_conversation_chain(vectorstore, processing_mode="hf_no_token"):
     try:
-        # Try OpenAI first if API key is available and valid
-        if os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_API_KEY") != "your_openai_api_key_here":
-            try:
-                llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0)
-                st.info("Using OpenAI ChatGPT for conversations...")
-                
-                memory = ConversationBufferMemory(
-                    memory_key='chat_history', return_messages=True)
-                conversation_chain = ConversationalRetrievalChain.from_llm(
-                    llm=llm,
-                    retriever=vectorstore.as_retriever(),
-                    memory=memory
-                )
-                st.success("Conversation system ready with OpenAI!")
-                return conversation_chain
-                
-            except Exception as openai_error:
-                if "quota" in str(openai_error).lower() or "429" in str(openai_error):
-                    st.warning("OpenAI quota exceeded. Switching to free HuggingFace model...")
-                else:
-                    st.warning(f"OpenAI error: {str(openai_error)}. Switching to free HuggingFace model...")
+        # Handle OpenAI mode
+        if processing_mode == "openai":
+            if os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_API_KEY") != "your_openai_api_key_here":
+                try:
+                    llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0)
+                    st.info("🚀 Using OpenAI ChatGPT for conversations (user selected)...")
+                    
+                    memory = ConversationBufferMemory(
+                        memory_key='chat_history', return_messages=True)
+                    conversation_chain = ConversationalRetrievalChain.from_llm(
+                        llm=llm,
+                        retriever=vectorstore.as_retriever(),
+                        memory=memory
+                    )
+                    st.success("✅ Conversation system ready with OpenAI!")
+                    return conversation_chain
+                    
+                except Exception as openai_error:
+                    if "quota" in str(openai_error).lower() or "429" in str(openai_error):
+                        st.error("❌ OpenAI quota exceeded! Falling back to HuggingFace model...")
+                    else:
+                        st.error(f"❌ OpenAI error: {str(openai_error)}. Falling back to HuggingFace model...")
+            else:
+                st.error("❌ No valid OpenAI API key found! Please add it to your .env file or choose a different processing mode.")
+                st.info("💡 Switching to HuggingFace model...")
         
-        # Fallback to HuggingFace Hub (completely free)
-        st.info("Using free HuggingFace model for conversations (this may be slower but completely free)...")
+        # Handle HuggingFace modes (with or without token)
+        if processing_mode == "hf_with_token":
+            st.info("🤗 Using HuggingFace model with API token for faster responses (cached)...")
+            hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+            if not hf_token:
+                st.warning("⚠️ No HuggingFace API token found in .env file!")
+                st.info("💡 Get one free at: https://huggingface.co/settings/tokens")
+                st.info("🔄 Falling back to public inference (no token mode)...")
+                processing_mode = "hf_no_token"  # Switch to no token mode
+        else:
+            st.info("🤗 Using HuggingFace model with public inference (cached - faster after first run)...")
         
-        # Get HuggingFace API token if available
-        hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
-        if not hf_token:
-            st.warning("No HuggingFace API token found. Using public inference (may be slower).")
-        
-        # Use a free, powerful model from HuggingFace
-        llm = HuggingFaceHub(
-            repo_id="google/flan-t5-large",  # Better for Q&A tasks
-            model_kwargs={
-                "temperature": 0.1, 
-                "max_length": 512,
-                "max_new_tokens": 200
-            },
-            huggingfacehub_api_token=hf_token
-        )
+        # Use cached HuggingFace model
+        llm = get_llm_model(processing_mode)
         
         memory = ConversationBufferMemory(
             memory_key='chat_history', return_messages=True)
@@ -159,11 +189,16 @@ def get_conversation_chain(vectorstore):
             retriever=vectorstore.as_retriever(),
             memory=memory
         )
-        st.success("Conversation system ready with HuggingFace!")
+        
+        if processing_mode == "hf_with_token" and hf_token:
+            st.success("✅ Conversation system ready with HuggingFace (with token - faster responses)!")
+        else:
+            st.success("✅ Conversation system ready with HuggingFace (public inference - completely free)!")
+        
         return conversation_chain
         
     except Exception as e:
-        st.error(f"Error creating conversation chain: {str(e)}")
+        st.error(f"❌ Error creating conversation chain: {str(e)}")
         st.error("Please check your API keys or try again later.")
         return None
 
@@ -175,9 +210,35 @@ def handle_userinput(user_question):
 
     try:
         with st.spinner("Thinking..."):
-            response = st.session_state.conversation({'question': user_question})
-            st.session_state.chat_history = response['chat_history']
+            # Try to get response with retries
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    # Format the question better for the model
+                    formatted_question = f"Based on the document context, please answer: {user_question}"
+                    response = st.session_state.conversation.invoke({'question': formatted_question})
+                    st.session_state.chat_history = response['chat_history']
+                    break  # Success, exit retry loop
+                except StopIteration:
+                    if attempt < max_retries - 1:
+                        st.warning(f"⚠️ Model didn't respond (attempt {attempt + 1}/{max_retries}). Retrying...")
+                        continue
+                    else:
+                        st.error("❌ The AI model is not responding. This often happens with HuggingFace public inference during high traffic.")
+                        st.info("💡 **Try these solutions:**")
+                        st.info("1. Wait a few minutes and try again")
+                        st.info("2. Try a shorter, simpler question")  
+                        st.info("3. Get a free HuggingFace API token for more reliable responses")
+                        st.info("4. Switch to OpenAI if you have credits")
+                        return
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        st.warning(f"⚠️ Error occurred (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                        continue
+                    else:
+                        raise e  # Re-raise the last exception
 
+        # Display conversation history
         for i, message in enumerate(st.session_state.chat_history):
             if i % 2 == 0:
                 st.write(user_template.replace(
@@ -186,13 +247,23 @@ def handle_userinput(user_question):
                 st.write(bot_template.replace(
                     "{{MSG}}", message.content), unsafe_allow_html=True)
                     
+    except StopIteration:
+        st.error("❌ The AI model stopped generating a response unexpectedly.")
+        st.info("💡 **This is a common issue with free HuggingFace inference. Try:**")
+        st.info("• Asking a shorter question")
+        st.info("• Waiting a few minutes for server load to decrease") 
+        st.info("• Getting a free HuggingFace API token for better reliability")
     except Exception as e:
+        st.error(f"❌ Error during conversation: {str(e)}")
         if "quota" in str(e).lower() or "429" in str(e):
-            st.error("❌ OpenAI quota exceeded! Please restart the app to use free HuggingFace models.")
-            st.info("💡 Refresh the page and reprocess your documents to use the free fallback.")
+            st.info("💡 This appears to be an API quota issue. Try switching to a different processing mode in the sidebar.")
+        elif "timeout" in str(e).lower():
+            st.info("💡 Request timed out. Please try asking a shorter question or try again.")
+        elif "token" in str(e).lower():
+            st.info("💡 This might be a token issue. Check your API keys in the .env file.")
         else:
-            st.error(f"Error during conversation: {str(e)}")
-            st.info("💡 Try refreshing the page and reprocessing your documents.")
+            st.info("💡 Try refreshing the page and reprocessing your documents, or switch to a different processing mode.")
+            st.info(f"🔧 **Debug info**: {type(e).__name__}: {str(e)}")
 
 
 def main():
@@ -205,20 +276,63 @@ def main():
         st.session_state.conversation = None
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = None
+    if "processing_mode" not in st.session_state:
+        st.session_state.processing_mode = "hf_no_token"  # Default to free mode
 
     st.header("Chat with AI with Custom Data 🚀")
     user_question = st.text_input("Ask a question about your Data:")
 
     with st.sidebar:
-        st.subheader("Your documents")
+        # Chat with PDFs Section
+        st.markdown("### **Chat with PDFs**")
+        st.markdown("---")
+        
+        st.subheader("📄 Add Your Documents:")
         pdf_docs = st.file_uploader(
-            "Upload your Data here  in PDF format and click on 'Process'", accept_multiple_files=True, type=['pdf'])
+            "Upload your Data here in PDF format and click on 'Process'", 
+            accept_multiple_files=True, 
+            type=['pdf']
+        )
+        
+        # Processing Configuration Section
+        st.markdown("---")
+        st.markdown("### **Configure Processing**")
+        
+        # Radio button for processing mode selection
+        processing_options = {
+            "hf_no_token": "🆓 HuggingFace NO Token (FREE **DEFAULT** - slowest)",
+            "hf_with_token": "⚡ HuggingFace Token (FREE requires HF API token - faster)", 
+            "openai": "💨 OpenAI API Key (PAY PER USE - faster than HF API token)"
+        }
+        
+        selected_mode = st.radio(
+            "Choose AI Processing Method:",
+            options=list(processing_options.keys()),
+            format_func=lambda x: processing_options[x],
+            index=0,  # Default to first option (hf_no_token)
+            help="Select your preferred AI processing method"
+        )
+        
+        # Store the selected mode in session state
+        st.session_state.processing_mode = selected_mode
+        
+        # Show additional info based on selection
+        if selected_mode == "hf_no_token":
+            pass  # No additional info needed for default free option
+        elif selected_mode == "hf_with_token":
+            if not os.getenv("HUGGINGFACEHUB_API_TOKEN"):
+                st.warning("⚠️ No HuggingFace token found in .env file!")
+        elif selected_mode == "openai":
+            st.info("💳 **OpenAI Account Required:**\n- Costs ~$0.002 per response\n- Fastest response time: ~2-8 seconds")
+            if not os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY") == "your_openai_api_key_here":
+                st.warning("⚠️ No OpenAI API key found in .env file!")
+                st.info("� Add `OPENAI_API_KEY=your_key` to .env file")
 
-        if st.button("Process"):
+        if st.button("Process", type="primary"):
             if pdf_docs is None or len(pdf_docs) == 0:
                 st.error("Please upload at least one PDF file.")
             else:
-                with st.spinner("Processing"):
+                with st.spinner(f"Processing with {processing_options[selected_mode]}..."):
                     # Extract text from PDFs
                     raw_text = get_pdf_text(pdf_docs)
                     
@@ -233,22 +347,28 @@ def main():
                         st.error("No text chunks could be created.")
                         return
                     
-                    # Create vector store
-                    vectorstore = get_vectorstore(text_chunks)
+                    # Create vector store with selected processing mode
+                    vectorstore = get_vectorstore(text_chunks, selected_mode)
                     
                     if vectorstore is None:
                         st.error("Failed to create vector store.")
                         return
                     
-                    # Create conversation chain
-                    conversation = get_conversation_chain(vectorstore)
+                    # Create conversation chain with selected processing mode
+                    conversation = get_conversation_chain(vectorstore, selected_mode)
                     
                     if conversation is None:
                         st.error("Failed to create conversation system.")
                         return
                     
                     st.session_state.conversation = conversation
-                    st.success("Your Data has been processed successfully")
+                    st.balloons()
+                    st.success(f"🎉 Your Data has been processed successfully using {processing_options[selected_mode]}!")
+
+    # Show current processing mode info
+    if st.session_state.conversation:
+        current_mode = st.session_state.processing_mode
+        st.sidebar.success(f"✅ Ready with: {processing_options[current_mode]}")
 
     if user_question:
         handle_userinput(user_question)
