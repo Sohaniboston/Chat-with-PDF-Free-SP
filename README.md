@@ -474,11 +474,12 @@ This project proves that **powerful AI doesn't have to be expensive**. By suppor
 - **[Streamlit](https://streamlit.io/)** - Amazing web framework
 - **[LangChain](https://langchain.com/)** - AI application framework
 - **[HuggingFace](https://huggingface.co/)** - Free AI models and hosting
+- **[HuggingFace](https://huggingface.co/docs/huggingface_hub/index)** - Learn more HF...
 - **[FAISS](https://faiss.ai/)** - Efficient similarity search
 - **[PyPDF2](https://pypdf2.readthedocs.io/)** - PDF processing
 
 ### Original Project:
-This FREE edition is based on the original work by **[yesbhautik](https://github.com/yesbhautik)**: [Talk-with-PDF](https://github.com/yesbhautik/Talk-with-PDF). The original project has been significantly enhanced with 100% free HuggingFace integration, smart fallback systems, comprehensive error handling, and extensive documentation.
+This FREE edition is based on the original work by **[yesbhautik](https://github.com/yesbhautik)**: [Talk-with-PDF](https://github.com/yesbhautik/Talk-with-PDF). The original project has been MASSIVELY enhanced with 100% free HuggingFace integration, smart fallback systems, comprehensive error handling, and extensive documentation.
 
 ### Inspiration:
 This project was inspired by the need for **accessible AI tools** that don't require expensive subscriptions or API costs. Everyone deserves access to powerful document analysis capabilities!

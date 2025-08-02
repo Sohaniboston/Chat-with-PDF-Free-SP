@@ -1,6 +1,7 @@
 import streamlit as st
 from dotenv import load_dotenv
 import os
+import logging
 from PyPDF2 import PdfReader
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_community.embeddings import OpenAIEmbeddings, HuggingFaceInstructEmbeddings
@@ -13,6 +14,15 @@ from htmlTemplates import css, bot_template, user_template, hide_st_style, foote
 from langchain_huggingface import HuggingFaceEndpoint
 from matplotlib import style
 
+# Configure logging to suppress warnings from libraries
+logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
+logging.getLogger("transformers").setLevel(logging.ERROR)
+logging.getLogger("langchain").setLevel(logging.ERROR)
+logging.getLogger("langchain_core").setLevel(logging.ERROR)
+logging.getLogger("langchain_community").setLevel(logging.ERROR)
+logging.getLogger("torch").setLevel(logging.ERROR)
+logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+
 # Load environment variables
 load_dotenv()
 
@@ -20,9 +30,30 @@ load_dotenv()
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 # Suppress additional warnings
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+# Suppress sentence-transformers device warnings
+os.environ["SENTENCE_TRANSFORMERS_DEVICE_DEPRECATION"] = "ignore"
+# Additional warning suppression
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+os.environ["HF_HUB_VERBOSITY"] = "error"
+
 import warnings
+# Suppress all types of warnings that appear in the console
+warnings.filterwarnings("ignore")  # Suppress all warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=PendingDeprecationWarning)
+warnings.filterwarnings("ignore", module="sentence_transformers")
+warnings.filterwarnings("ignore", module="langchain")
+warnings.filterwarnings("ignore", module="transformers")
+warnings.filterwarnings("ignore", module="huggingface_hub")
+warnings.filterwarnings("ignore", module="langchain_community")
+warnings.filterwarnings("ignore", module="langchain_core")
+# Suppress specific LangChain deprecation warnings
+warnings.filterwarnings("ignore", message=".*migrating_memory.*")
+warnings.filterwarnings("ignore", message=".*_target_device.*")
+warnings.filterwarnings("ignore", message=".*deprecated.*")
+warnings.filterwarnings("ignore", message=".*ConversationBufferMemory.*")
 
 # Check API keys availability (for informational purposes only)
 openai_key = os.getenv("OPENAI_API_KEY")
@@ -294,6 +325,51 @@ def main():
             type=['pdf']
         )
         
+        # Process Button - moved above configuration and made primary
+        if st.button("Process", type="primary", use_container_width=True):
+            if pdf_docs is None or len(pdf_docs) == 0:
+                st.error("Please upload at least one PDF file.")
+            else:
+                # Processing options for display
+                processing_options = {
+                    "hf_no_token": "🆓 HuggingFace NO Token (FREE **DEFAULT** - slowest)",
+                    "hf_with_token": "⚡ HuggingFace Token (FREE requires HF API token - faster)", 
+                    "openai": "💨 OpenAI API Key (PAY PER USE - faster than HF API token)"
+                }
+                
+                with st.spinner(f"Processing with {processing_options[st.session_state.processing_mode]}..."):
+                    # Extract text from PDFs
+                    raw_text = get_pdf_text(pdf_docs)
+                    
+                    if not raw_text:
+                        st.error("No text could be extracted from the uploaded PDFs.")
+                        st.stop()
+                    
+                    # Create text chunks
+                    text_chunks = get_text_chunks(raw_text)
+                    
+                    if not text_chunks:
+                        st.error("No text chunks could be created.")
+                        st.stop()
+                    
+                    # Create vector store with selected processing mode
+                    vectorstore = get_vectorstore(text_chunks, st.session_state.processing_mode)
+                    
+                    if vectorstore is None:
+                        st.error("Failed to create vector store.")
+                        st.stop()
+                    
+                    # Create conversation chain with selected processing mode
+                    conversation = get_conversation_chain(vectorstore, st.session_state.processing_mode)
+                    
+                    if conversation is None:
+                        st.error("Failed to create conversation system.")
+                        st.stop()
+                    
+                    st.session_state.conversation = conversation
+                    st.balloons()
+                    st.success(f"🎉 Your Data has been processed successfully using {processing_options[st.session_state.processing_mode]}!")
+
         # Processing Configuration Section
         st.markdown("---")
         st.markdown("### **Configure Processing**")
@@ -326,48 +402,16 @@ def main():
             st.info("💳 **OpenAI Account Required:**\n- Costs ~$0.002 per response\n- Fastest response time: ~2-8 seconds")
             if not os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY") == "your_openai_api_key_here":
                 st.warning("⚠️ No OpenAI API key found in .env file!")
-                st.info("� Add `OPENAI_API_KEY=your_key` to .env file")
-
-        if st.button("Process", type="primary"):
-            if pdf_docs is None or len(pdf_docs) == 0:
-                st.error("Please upload at least one PDF file.")
-            else:
-                with st.spinner(f"Processing with {processing_options[selected_mode]}..."):
-                    # Extract text from PDFs
-                    raw_text = get_pdf_text(pdf_docs)
-                    
-                    if not raw_text:
-                        st.error("No text could be extracted from the uploaded PDFs.")
-                        return
-                    
-                    # Create text chunks
-                    text_chunks = get_text_chunks(raw_text)
-                    
-                    if not text_chunks:
-                        st.error("No text chunks could be created.")
-                        return
-                    
-                    # Create vector store with selected processing mode
-                    vectorstore = get_vectorstore(text_chunks, selected_mode)
-                    
-                    if vectorstore is None:
-                        st.error("Failed to create vector store.")
-                        return
-                    
-                    # Create conversation chain with selected processing mode
-                    conversation = get_conversation_chain(vectorstore, selected_mode)
-                    
-                    if conversation is None:
-                        st.error("Failed to create conversation system.")
-                        return
-                    
-                    st.session_state.conversation = conversation
-                    st.balloons()
-                    st.success(f"🎉 Your Data has been processed successfully using {processing_options[selected_mode]}!")
+                st.info("🔑 Add `OPENAI_API_KEY=your_key` to .env file")
 
     # Show current processing mode info
     if st.session_state.conversation:
         current_mode = st.session_state.processing_mode
+        processing_options = {
+            "hf_no_token": "🆓 HuggingFace NO Token (FREE **DEFAULT** - slowest)",
+            "hf_with_token": "⚡ HuggingFace Token (FREE requires HF API token - faster)", 
+            "openai": "💨 OpenAI API Key (PAY PER USE - faster than HF API token)"
+        }
         st.sidebar.success(f"✅ Ready with: {processing_options[current_mode]}")
 
     if user_question:

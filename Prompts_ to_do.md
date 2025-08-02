@@ -52,3 +52,28 @@ SOLUTION: Changed model to "sentence-transformers/all-MiniLM-L6-v2" and implemen
 ✅ IMPLEMENTED: Added retry logic for failed model responses (3 attempts)
 ✅ OPTIMIZED: Switched to more reliable google/flan-t5-base model with reduced token limits
 ✅ IMPLEMENTED: Added timeout handling and specific StopIteration error messages 
+
+###############################################################
+
+**Cosmetic Changes:**
+
+DONE: Move the Process" button above the Configuration section in the sidebar and make it the activated button so that the user just needs to press "Enter" to send the Process command.  Also remove the vertical white space in the sidebar before  and after the horizontal rule lines. 
+
+
+DONE: Remove "Made by Yesbhautik with Streamlit" that appears at the bottom of the Streamlit page. 
+
+###########################################################
+
+TODO: ***Investigate: Is there a way to FIX, NOT SUPPRESS these deprecation warnings?***
+
+    (chat_with_pdf) c:\Users\so_ho\Desktop\00_PythonWIP\Chat_with_PDF>streamlit run app.py
+
+    You can now view your Streamlit app in your browser.
+    `SentenceTransformer._target_device` has been deprecated, please use `SentenceTransformer.device` instead.      
+    c:\Users\so_ho\Desktop\00_PythonWIP\Chat_with_PDF\app.py:185: LangChainDeprecationWarning: Please see the migration guide at: https://python.langchain.com/docs/versions/migrating_memory/
+    memory = ConversationBufferMemory(
+    `SentenceTransformer._target_device` has been deprecated, please use `SentenceTransformer.device` instead.      
+    `SentenceTransformer._target_device` has been deprecated, please use `SentenceTransformer.device` instead.      
+    `SentenceTransformer._target_device` has been deprecated, please use `SentenceTransformer.device` instead.      
+
+####################################################################

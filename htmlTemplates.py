@@ -74,6 +74,6 @@ hide_st_style = """
 
 footer = """
         <div class="footer">
-        <p>Made by <a href="https://yesbhautik.co.in" style="color:#64feda;">Yesbhautik</a> with <a href="https://streamlit.io" style="color:#36AE7C;">Streamlit</a></p>
+        <p>Made by <a href="https://github.com/Sohaniboston" style="color:#64feda;">Sohani Pradhanang</a> with <a href="https://streamlit.io" style="color:#36AE7C;">Streamlit</a></p>
         </div>
 """
