@@ -376,9 +376,9 @@ def main():
         
         # Radio button for processing mode selection
         processing_options = {
-            "hf_no_token": "🆓 HuggingFace NO Token (FREE **DEFAULT** - slowest)",
-            "hf_with_token": "⚡ HuggingFace Token (FREE requires HF API token - faster)", 
-            "openai": "💨 OpenAI API Key (PAY PER USE - faster than HF API token)"
+            "hf_no_token": "HuggingFace NO Token (FREE **DEFAULT** - slow)",
+            "hf_with_token": "HuggingFace API Token (FREE - fast)", 
+            "openai": "OpenAI API Key (PAY ¢ PER USE - faster)"
         }
         
         selected_mode = st.radio(
